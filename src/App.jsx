@@ -197,7 +197,35 @@ function KpiCard({ icon, title, value, subtitle }) {
     </div>
   );
 }
+function GapList({ title, items }) {
+  if (!items || !items.length) {
+    return (
+      <div className="gap-section">
+        <h4>{title}</h4>
+        <p className="muted">Inga tydliga avvikelser.</p>
+      </div>
+    );
+  }
 
+  return (
+    <div className="gap-section">
+      <h4>{title}</h4>
+      <div className="gap-list">
+        {items.map((item, index) => (
+          <div className={`gap-item ${item.severity}`} key={`${item.segmentValue}-${index}`}>
+            <div>
+              <strong>{item.segmentValue}</strong>
+              <span>
+                Lager {Math.round(item.currentShare * 100)}% · Mål {Math.round(item.targetShare * 100)}%
+              </span>
+            </div>
+            <b>{item.gap > 0 ? "+" : ""}{Math.round(item.gap * 100)} pp</b>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 function ScoreBar({ label, value }) {
   return (
     <div className="score-row">
@@ -502,7 +530,52 @@ function Dashboard({ analysis, targetMonth }) {
           </div>
         </div>
       </div>
+      <div className="grid-two">
+        <div className="card">
+          <div className="card-title">
+            <Target size={20} />
+            Saknas i lager
+          </div>
 
+          <GapList title="Prisgrupper" items={analysis.underrepresented?.price || []} />
+          <GapList title="Märken" items={analysis.underrepresented?.brands || []} />
+          <GapList title="Miltal" items={analysis.underrepresented?.mileage || []} />
+        </div>
+
+        <div className="card">
+          <div className="card-title">
+            <AlertTriangle size={20} />
+            Överrepresenterat
+          </div>
+
+          <GapList title="Prisgrupper" items={analysis.overrepresented?.price || []} />
+          <GapList title="Märken" items={analysis.overrepresented?.brands || []} />
+          <GapList title="Miltal" items={analysis.overrepresented?.mileage || []} />
+        </div>
+      </div>
+
+      <div className="card score-explanation-card">
+        <div className="card-title">
+          <Info size={20} />
+          Varför blev betyget så här?
+        </div>
+
+        <div className="score-explanation-grid">
+          {(analysis.scoreExplanation?.weakest || []).map((item) => (
+            <div className="explanation-box weak" key={item.key}>
+              <strong>{item.label}: {item.value}/100</strong>
+              <p>{item.explanation}</p>
+            </div>
+          ))}
+
+          {(analysis.scoreExplanation?.strongest || []).map((item) => (
+            <div className="explanation-box strong" key={item.key}>
+              <strong>{item.label}: {item.value}/100</strong>
+              <p>{item.explanation}</p>
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="grid-two">
         <div className="card chart-card">
           <div className="card-title">
