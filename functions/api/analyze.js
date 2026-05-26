@@ -90,6 +90,10 @@ function percentage(value) {
   return `${Math.round(value * 100)}%`;
 }
 
+function pp(value) {
+  return `${Math.round(value * 100)} procentenheter`;
+}
+
 function buildGaps(currentShares, targetShares, segmentType, keys) {
   return keys
     .filter((key) => key !== "Okänt")
@@ -109,6 +113,30 @@ function buildGaps(currentShares, targetShares, segmentType, keys) {
       };
     })
     .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
+}
+
+function buildBrandGaps(currentShares, targetShares) {
+  const importantBrands = Object.entries(targetShares)
+    .filter(([brand]) => brand && brand !== "Okänt")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([brand]) => brand);
+
+  return buildGaps(currentShares, targetShares, "Märke", importantBrands);
+}
+
+function getTopUnderrepresented(gaps, minTargetShare = 0.08) {
+  return gaps
+    .filter((gap) => gap.gap < -0.06 && gap.targetShare >= minTargetShare)
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, 5);
+}
+
+function getTopOverrepresented(gaps, minCurrentShare = 0.08) {
+  return gaps
+    .filter((gap) => gap.gap > 0.06 && gap.currentShare >= minCurrentShare)
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 5);
 }
 
 async function getSoldVehicles(env) {
@@ -162,6 +190,167 @@ function buildTargetProfile(soldVehicles, targetMonth) {
     mileageShares,
     brandShares,
     monthlySales
+  };
+}
+
+function createRecommendations({
+  targetMonth,
+  priceGaps,
+  mileageGaps,
+  brandGaps,
+  over180Days,
+  missingAdPrice
+}) {
+  const recommendations = [];
+
+  const underPrice = getTopUnderrepresented(priceGaps, 0.08);
+  const overPrice = getTopOverrepresented(priceGaps, 0.08);
+
+  const underMileage = getTopUnderrepresented(mileageGaps, 0.08);
+  const overMileage = getTopOverrepresented(mileageGaps, 0.08);
+
+  const underBrands = getTopUnderrepresented(brandGaps, 0.06);
+  const overBrands = getTopOverrepresented(brandGaps, 0.06);
+
+  for (const gap of underPrice.slice(0, 2)) {
+    recommendations.push({
+      priority: "high",
+      type: "buy_more_price",
+      title: `Köp in fler bilar i ${gap.segmentValue}`,
+      description: `Nuvarande lagerandel är ${percentage(gap.currentShare)}, medan målprofilen för ${MONTHS[targetMonth - 1]} är ${percentage(gap.targetShare)}. Bristen är cirka ${pp(Math.abs(gap.gap))}.`
+    });
+  }
+
+  for (const gap of underBrands.slice(0, 2)) {
+    recommendations.push({
+      priority: "medium",
+      type: "buy_more_brand",
+      title: `Stärk märkesmixen med ${gap.segmentValue}`,
+      description: `${gap.segmentValue} är underrepresenterat mot historisk försäljning. Nuvarande andel är ${percentage(gap.currentShare)}, jämfört med målprofilens ${percentage(gap.targetShare)}.`
+    });
+  }
+
+  for (const gap of underMileage.slice(0, 1)) {
+    recommendations.push({
+      priority: "medium",
+      type: "buy_more_mileage",
+      title: `Komplettera med bilar i miltalsgruppen ${gap.segmentValue}`,
+      description: `Miltalsgruppen är lägre i nuvarande lager än vad historisk målprofil visar för månaden.`
+    });
+  }
+
+  for (const gap of overPrice.slice(0, 2)) {
+    recommendations.push({
+      priority: "medium",
+      type: "avoid_price",
+      title: `Var försiktig med fler inköp i ${gap.segmentValue}`,
+      description: `Segmentet är överrepresenterat. Nuvarande lagerandel är ${percentage(gap.currentShare)}, jämfört med målprofilens ${percentage(gap.targetShare)}.`
+    });
+  }
+
+  for (const gap of overBrands.slice(0, 1)) {
+    recommendations.push({
+      priority: "low",
+      type: "avoid_brand",
+      title: `Undvik att öka exponeringen mot ${gap.segmentValue}`,
+      description: `${gap.segmentValue} finns redan i högre andel än målprofilen indikerar för månaden.`
+    });
+  }
+
+  for (const gap of overMileage.slice(0, 1)) {
+    recommendations.push({
+      priority: "low",
+      type: "avoid_mileage",
+      title: `Minska fokus på miltalsgruppen ${gap.segmentValue}`,
+      description: `Nuvarande lager har högre andel i denna miltalsgrupp än historisk målprofil.`
+    });
+  }
+
+  if (over180Days > 0) {
+    recommendations.push({
+      priority: "high",
+      type: "stock_risk",
+      title: `Åtgärda ${over180Days} bilar över 180 lagerdagar`,
+      description:
+        "Dessa bilar binder kapital och bör prioriteras för prisjustering, kampanj eller annan avyttring innan nytt kapital binds i liknande segment."
+    });
+  }
+
+  if (missingAdPrice > 0) {
+    recommendations.push({
+      priority: "medium",
+      type: "data_quality",
+      title: `${missingAdPrice} bilar saknar användbart annonspris`,
+      description:
+        "Detta gör marginal- och prisanalysen mindre säker. Komplettera annonspris för bättre beslutsunderlag."
+    });
+  }
+
+  if (!recommendations.length) {
+    recommendations.push({
+      priority: "medium",
+      type: "balanced_stock",
+      title: "Lagret ligger nära historisk målprofil",
+      description:
+        "Fortsätt följa lagerålder, prisbalans och datakvalitet inför kommande inköp."
+    });
+  }
+
+  return recommendations.slice(0, 8);
+}
+
+function buildScoreExplanation(scores) {
+  const scoreItems = [
+    {
+      key: "priceMixScore",
+      label: "Prisbalans",
+      value: scores.priceMixScore,
+      explanation:
+        "mäter hur väl lagrets prisgrupper matchar historisk försäljning för vald månad"
+    },
+    {
+      key: "brandScore",
+      label: "Märkesmix",
+      value: scores.brandScore,
+      explanation:
+        "mäter hur väl lagrets märken matchar historiskt starka märken"
+    },
+    {
+      key: "mileageScore",
+      label: "Miltal",
+      value: scores.mileageScore,
+      explanation:
+        "mäter hur väl lagrets miltalsgrupper matchar historisk försäljning"
+    },
+    {
+      key: "stockRiskScore",
+      label: "Lagerålder",
+      value: scores.stockRiskScore,
+      explanation:
+        "påverkas negativt av bilar som stått länge i lager"
+    },
+    {
+      key: "dataQualityScore",
+      label: "Datakvalitet",
+      value: scores.dataQualityScore,
+      explanation:
+        "påverkas negativt av saknade eller oanvändbara annonspriser"
+    }
+  ];
+
+  const weakest = [...scoreItems].sort((a, b) => a.value - b.value).slice(0, 2);
+  const strongest = [...scoreItems].sort((a, b) => b.value - a.value).slice(0, 2);
+
+  return {
+    weights: [
+      { label: "Prisbalans", weight: 30 },
+      { label: "Märkesmix", weight: 20 },
+      { label: "Miltal", weight: 15 },
+      { label: "Lagerålder", weight: 25 },
+      { label: "Datakvalitet", weight: 10 }
+    ],
+    weakest,
+    strongest
   };
 }
 
@@ -220,6 +409,14 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     Math.round(100 - (missingAdPrice / inventoryCount) * 100)
   );
 
+  const scores = {
+    priceMixScore,
+    brandScore,
+    mileageScore,
+    stockRiskScore,
+    dataQualityScore
+  };
+
   const totalScore = Math.round(
     priceMixScore * 0.3 +
       brandScore * 0.2 +
@@ -235,63 +432,26 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     PRICE_BUCKETS
   );
 
-  const topUnderrepresentedPrice = priceGaps.find(
-    (gap) => gap.gap < -0.08 && gap.targetShare > 0.08
+  const mileageGaps = buildGaps(
+    currentMileageShares,
+    targetProfile.mileageShares,
+    "Miltal",
+    MILEAGE_BUCKETS
   );
 
-  const topOverrepresentedPrice = priceGaps.find(
-    (gap) => gap.gap > 0.08 && gap.currentShare > 0.08
+  const brandGaps = buildBrandGaps(
+    currentBrandShares,
+    targetProfile.brandShares
   );
 
-  const recommendations = [];
-
-  if (topUnderrepresentedPrice) {
-    recommendations.push({
-      priority: "high",
-      title: `Öka andelen bilar i ${topUnderrepresentedPrice.segmentValue}`,
-      description: `Nuvarande lagerandel är ${percentage(
-        topUnderrepresentedPrice.currentShare
-      )}, medan historisk målprofil för ${
-        MONTHS[targetMonth - 1]
-      } är ${percentage(topUnderrepresentedPrice.targetShare)}.`
-    });
-  }
-
-  if (topOverrepresentedPrice) {
-    recommendations.push({
-      priority: "medium",
-      title: `Var försiktig med fler inköp i ${topOverrepresentedPrice.segmentValue}`,
-      description:
-        "Segmentet är överrepresenterat jämfört med historisk målprofil. Prioritera att omsätta befintliga bilar innan mer köps in."
-    });
-  }
-
-  if (over180Days > 0) {
-    recommendations.push({
-      priority: "high",
-      title: `Åtgärda ${over180Days} bilar över 180 lagerdagar`,
-      description:
-        "Dessa bilar binder kapital och bör prioriteras för prisjustering, kampanj eller annan avyttring."
-    });
-  }
-
-  if (missingAdPrice > 0) {
-    recommendations.push({
-      priority: "medium",
-      title: `${missingAdPrice} bilar saknar användbart annonspris`,
-      description:
-        "Detta gör marginal- och prisanalysen mindre säker. Komplettera annonspris för bättre beslutsunderlag."
-    });
-  }
-
-  if (!recommendations.length) {
-    recommendations.push({
-      priority: "medium",
-      title: "Lagret ligger nära historisk målprofil",
-      description:
-        "Fortsätt följa lagerålder, prisbalans och datakvalitet inför kommande inköp."
-    });
-  }
+  const recommendations = createRecommendations({
+    targetMonth,
+    priceGaps,
+    mileageGaps,
+    brandGaps,
+    over180Days,
+    missingAdPrice
+  });
 
   const riskVehicles = inventoryVehicles
     .filter((v) => Number(v.daysInStock || 0) > 90 || !v.adPrice || Number(v.adPrice) <= 0)
@@ -321,7 +481,7 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
       };
     })
     .sort((a, b) => b.daysInStock - a.daysInStock)
-    .slice(0, 8);
+    .slice(0, 12);
 
   const mixChartData = PRICE_BUCKETS.filter((bucket) => bucket !== "Okänt").map(
     (bucket) => ({
@@ -331,25 +491,19 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     })
   );
 
+  const topIssue = recommendations[0];
+
   const summary = {
     headline: `Lagret får ${totalScore}/100 inför ${MONTHS[targetMonth - 1]}.`,
-    body:
-      recommendations
-        .slice(0, 3)
-        .map((rec) => rec.title)
-        .join(". ") +
-      ". Analysen bygger på privat historisk försäljning och aktuell lagerlista."
+    body: topIssue
+      ? `${topIssue.title}. ${topIssue.description}`
+      : "Lagret ligger nära historisk målprofil. Fortsätt följa prisbalans, lagerålder och datakvalitet."
   };
 
   return {
     totalScore,
-    scores: {
-      priceMixScore,
-      brandScore,
-      mileageScore,
-      stockRiskScore,
-      dataQualityScore
-    },
+    scores,
+    scoreExplanation: buildScoreExplanation(scores),
     kpis: {
       inventoryCount: inventoryVehicles.length,
       over90Days,
@@ -361,6 +515,18 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     },
     mixChartData,
     priceGaps,
+    mileageGaps,
+    brandGaps,
+    underrepresented: {
+      price: getTopUnderrepresented(priceGaps, 0.08),
+      mileage: getTopUnderrepresented(mileageGaps, 0.08),
+      brands: getTopUnderrepresented(brandGaps, 0.06)
+    },
+    overrepresented: {
+      price: getTopOverrepresented(priceGaps, 0.08),
+      mileage: getTopOverrepresented(mileageGaps, 0.08),
+      brands: getTopOverrepresented(brandGaps, 0.06)
+    },
     recommendations,
     riskVehicles,
     summary
