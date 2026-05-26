@@ -481,7 +481,7 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
       };
     })
     .sort((a, b) => b.daysInStock - a.daysInStock)
-    .slice(0, 12);
+    ;
 
   const mixChartData = PRICE_BUCKETS.filter((bucket) => bucket !== "Okänt").map(
     (bucket) => ({
