@@ -635,3 +635,59 @@ button {
     grid-template-columns: 1fr;
   }
 }
+.risk-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.risk-toolbar h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.risk-toolbar p {
+  margin: 6px 0 0;
+  color: #64748b;
+}
+
+.table-empty {
+  margin-top: 16px;
+}
+
+.report-card {
+  max-width: 980px;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.report-header p {
+  margin: 0;
+  color: #64748b;
+}
+
+.report-preview {
+  white-space: pre-wrap;
+  background: #0f172a;
+  color: #e5e7eb;
+  border-radius: 18px;
+  padding: 20px;
+  overflow: auto;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+@media (max-width: 760px) {
+  .risk-toolbar,
+  .report-header {
+    flex-direction: column;
+  }
+}
