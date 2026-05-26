@@ -17,7 +17,9 @@ import {
   BarChart3,
   Car,
   Clock,
+  ClipboardCopy,
   Database,
+  FileText,
   FileUp,
   Home,
   Info,
@@ -246,6 +248,7 @@ function Sidebar({ activeView, setActiveView }) {
     { id: "trends", label: "Historiska trender", icon: <TrendingUp size={20} /> },
     { id: "analysis", label: "Ny lageranalys", icon: <Upload size={20} /> },
     { id: "risks", label: "Risklager", icon: <AlertTriangle size={20} /> },
+    { id: "report", label: "Rapport", icon: <FileText size={20} /> },
     { id: "admin", label: "Adminimport", icon: <Database size={20} /> },
     { id: "settings", label: "Inställningar", icon: <Settings size={20} /> }
   ];
@@ -671,12 +674,280 @@ function Dashboard({ analysis, targetMonth }) {
     </>
   );
 }
+function TrendsPage({ trends }) {
+  if (!trends) {
+    return (
+      <div className="empty-state">
+        <TrendingUp size={42} />
+        <h2>Historiska trender laddas...</h2>
+        <p>Kontrollera att sålda-data är importerad.</p>
+      </div>
+    );
+  }
 
+  return (
+    <>
+      <div className="kpi-grid">
+        <KpiCard
+          icon={<Database size={22} />}
+          title="Sålda bilar"
+          value={trends.totalSold || 0}
+          subtitle="Importerad historik"
+        />
+        <KpiCard
+          icon={<TrendingUp size={22} />}
+          title="Starkaste månad"
+          value={
+            [...(trends.monthlySales || [])].sort((a, b) => b.antal - a.antal)[0]?.month || "-"
+          }
+          subtitle="Baserat på antal sålda"
+        />
+        <KpiCard
+          icon={<Tag size={22} />}
+          title="Största prisgrupp"
+          value={
+            [...(trends.priceDistribution || [])].sort((a, b) => b.antal - a.antal)[0]?.bucket || "-"
+          }
+          subtitle="Historiskt vanligast"
+        />
+        <KpiCard
+          icon={<Car size={22} />}
+          title="Toppmärke"
+          value={trends.topBrands?.[0]?.brand || "-"}
+          subtitle="Flest sålda"
+        />
+      </div>
+
+      <div className="grid-two">
+        <div className="card chart-card">
+          <div className="card-title">
+            <TrendingUp size={20} />
+            Antal sålda per månad
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={trends.monthlySales || []}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Line type="monotone" dataKey="antal" strokeWidth={3} dot />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card chart-card">
+          <div className="card-title">
+            <Tag size={20} />
+            Historisk prisfördelning
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={(trends.priceDistribution || []).filter((x) => x.bucket !== "Okänt")}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="andel" name="Andel %" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="grid-two">
+        <div className="card chart-card">
+          <div className="card-title">
+            <Clock size={20} />
+            Snitt lagerdagar per månad
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={trends.monthlySales || []}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Line type="monotone" dataKey="lagerdagar" strokeWidth={3} dot />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card">
+          <div className="card-title">
+            <Car size={20} />
+            Toppmärken historiskt
+          </div>
+
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Märke</th>
+                <th>Antal sålda</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(trends.topBrands || []).map((brand) => (
+                <tr key={brand.brand}>
+                  <td><strong>{brand.brand}</strong></td>
+                  <td>{brand.antal}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function RiskPage({ analysis }) {
+  const [filter, setFilter] = useState("Alla");
+
+  if (!analysis) {
+    return (
+      <div className="empty-state">
+        <AlertTriangle size={42} />
+        <h2>Ingen riskanalys ännu</h2>
+        <p>Ladda upp en lagerlista för att se risklager.</p>
+      </div>
+    );
+  }
+
+  const risks = analysis.riskVehicles || [];
+
+  const filteredRisks =
+    filter === "Alla" ? risks : risks.filter((vehicle) => vehicle.risk === filter);
+
+  return (
+    <>
+      <div className="risk-toolbar">
+        <div>
+          <h2>Risklager</h2>
+          <p>Alla bilar som kräver uppföljning baserat på lagerålder eller datakvalitet.</p>
+        </div>
+
+        <select
+          className="select compact"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        >
+          <option>Alla</option>
+          <option>Kritisk</option>
+          <option>Hög</option>
+          <option>Medium</option>
+        </select>
+      </div>
+
+      <div className="card">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Bil</th>
+              <th>Reg.nr</th>
+              <th>Dagar i lager</th>
+              <th>Risk</th>
+              <th>Rekommenderad åtgärd</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRisks.map((vehicle, index) => (
+              <tr key={`${vehicle.regNumber}-${index}`}>
+                <td><strong>{vehicle.name}</strong></td>
+                <td>{vehicle.regNumber || "-"}</td>
+                <td>{vehicle.daysInStock}</td>
+                <td>
+                  <span className={`badge ${vehicle.risk.toLowerCase()}`}>
+                    {vehicle.risk}
+                  </span>
+                </td>
+                <td>{vehicle.action}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {!filteredRisks.length && (
+          <p className="muted table-empty">Inga riskbilar matchar filtret.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ReportPage({ analysis, targetMonth }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!analysis) {
+    return (
+      <div className="empty-state">
+        <FileText size={42} />
+        <h2>Ingen rapport ännu</h2>
+        <p>Ladda upp en lagerlista för att skapa rapport.</p>
+      </div>
+    );
+  }
+
+  const reportText = [
+    `Lageranalys inför ${MONTHS[targetMonth - 1]}`,
+    ``,
+    `Lagerbetyg: ${analysis.totalScore}/100`,
+    `Bilar i lager: ${analysis.kpis.inventoryCount}`,
+    `Bilar över 180 dagar: ${analysis.kpis.over180Days}`,
+    `Bilar utan användbart annonspris: ${analysis.kpis.missingAdPrice}`,
+    ``,
+    `Sammanfattning:`,
+    `${analysis.summary?.headline || ""}`,
+    `${analysis.summary?.body || ""}`,
+    ``,
+    `Rekommenderade åtgärder:`,
+    ...(analysis.recommendations || []).map((rec, index) => {
+      return `${index + 1}. ${rec.title} — ${rec.description}`;
+    }),
+    ``,
+    `Riskbilar:`,
+    ...(analysis.riskVehicles || []).slice(0, 10).map((vehicle, index) => {
+      return `${index + 1}. ${vehicle.name} (${vehicle.regNumber || "saknar reg.nr"}) — ${vehicle.daysInStock} dagar — ${vehicle.risk} — ${vehicle.action}`;
+    })
+  ].join("\n");
+
+  async function copyReport() {
+    await navigator.clipboard.writeText(reportText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="card report-card">
+      <div className="report-header">
+        <div>
+          <div className="card-title">
+            <FileText size={20} />
+            Rapport
+          </div>
+          <p>Kopiera rapporten och klistra in den i mail, dokument eller intern uppföljning.</p>
+        </div>
+
+        <button className="primary-button" onClick={copyReport}>
+          <ClipboardCopy size={18} />
+          {copied ? "Kopierad" : "Kopiera rapport"}
+        </button>
+      </div>
+
+      <pre className="report-preview">{reportText}</pre>
+    </div>
+  );
+}
 export default function App() {
   const [activeView, setActiveView] = useState("overview");
   const [targetMonth, setTargetMonth] = useState(6);
-  const [analysis, setAnalysis] = useState(null);
+   const [analysis, setAnalysis] = useState(() => {
+    try {
+      const saved = localStorage.getItem("lageranalys_latest_analysis");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [historyStatus, setHistoryStatus] = useState(null);
+  const [trends, setTrends] = useState(null);
 
   async function loadHistoryStatus() {
     try {
@@ -685,21 +956,29 @@ export default function App() {
 
       if (response.ok) {
         setHistoryStatus(data);
+        setTrends(data);
       }
     } catch {
       setHistoryStatus(null);
+      setTrends(null);
     }
   }
 
   useEffect(() => {
     loadHistoryStatus();
   }, []);
-
+  useEffect(() => {
+    if (analysis) {
+      localStorage.setItem("lageranalys_latest_analysis", JSON.stringify(analysis));
+    }
+  }, [analysis]);
+  
   const title = useMemo(() => {
     if (activeView === "admin") return "Adminimport";
     if (activeView === "analysis") return "Ny lageranalys";
     if (activeView === "trends") return "Historiska trender";
     if (activeView === "risks") return "Risklager";
+    if (activeView === "report") return "Rapport";
     if (activeView === "settings") return "Inställningar";
     return `Lageranalys inför ${MONTHS[targetMonth - 1].toLowerCase()}`;
   }, [activeView, targetMonth]);
@@ -755,7 +1034,27 @@ export default function App() {
           />
         )}
 
-        {activeView !== "admin" && activeView !== "analysis" && (
+        {activeView === "trends" && (
+          <TrendsPage trends={trends} />
+        )}
+
+        {activeView === "risks" && (
+          <RiskPage analysis={analysis} />
+        )}
+
+        {activeView === "report" && (
+          <ReportPage analysis={analysis} targetMonth={targetMonth} />
+        )}
+
+        {activeView === "settings" && (
+          <div className="empty-state">
+            <Settings size={42} />
+            <h2>Inställningar kommer senare</h2>
+            <p>Här kan vi senare lägga scoringvikter, anläggningar och användarroller.</p>
+          </div>
+        )}
+
+        {activeView === "overview" && (
           <Dashboard analysis={analysis} targetMonth={targetMonth} />
         )}
       </main>
