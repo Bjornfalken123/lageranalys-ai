@@ -89,7 +89,18 @@ function scoreMix(currentShares, targetShares, keys) {
 function percentage(value) {
   return `${Math.round(value * 100)}%`;
 }
+function getModelFamily(brand, model) {
+  const cleanBrand = String(brand || "Okänt").trim();
+  const cleanModel = String(model || "Okänt").trim();
 
+  if (!cleanBrand || cleanBrand === "Okänt") return "Okänt";
+  if (!cleanModel || cleanModel === "Okänt") return cleanBrand;
+
+  const words = cleanModel.split(" ").filter(Boolean);
+  const first = words[0] || cleanModel;
+
+  return `${cleanBrand} ${first}`;
+}
 function pp(value) {
   return `${Math.round(value * 100)} procentenheter`;
 }
@@ -144,9 +155,11 @@ async function getSoldVehicles(env) {
     SELECT
       brand,
       model,
+      model_family AS modelFamily,
       sold_month AS soldMonth,
       price_bucket AS priceBucket,
       mileage_bucket AS mileageBucket,
+      cost_risk_bucket AS costRiskBucket,
       days_in_stock AS daysInStock,
       gross_margin AS grossMargin
     FROM sold_vehicles
@@ -174,7 +187,8 @@ function buildTargetProfile(soldVehicles, targetMonth) {
   const priceShares = shareBy(basis, (v) => v.priceBucket, PRICE_BUCKETS);
   const mileageShares = shareBy(basis, (v) => v.mileageBucket, MILEAGE_BUCKETS);
   const brandShares = shareBy(basis, (v) => v.brand);
-
+  const modelFamilyShares = shareBy(basis, (v) => v.modelFamily);
+  const costRiskShares = shareBy(basis, (v) => v.costRiskBucket);
   const monthlySales = MONTHS.map((name, index) => {
     const month = index + 1;
 
@@ -189,6 +203,8 @@ function buildTargetProfile(soldVehicles, targetMonth) {
     priceShares,
     mileageShares,
     brandShares,
+    modelFamilyShares,
+    costRiskShares,
     monthlySales
   };
 }
@@ -198,6 +214,8 @@ function createRecommendations({
   priceGaps,
   mileageGaps,
   brandGaps,
+  modelFamilyGaps,
+  costRiskSummary,
   over180Days,
   missingAdPrice
 }) {
@@ -211,7 +229,8 @@ function createRecommendations({
 
   const underBrands = getTopUnderrepresented(brandGaps, 0.06);
   const overBrands = getTopOverrepresented(brandGaps, 0.06);
-
+  const underModels = getTopUnderrepresented(modelFamilyGaps || [], 0.04);
+  const overModels = getTopOverrepresented(modelFamilyGaps || [], 0.04);
   for (const gap of underPrice.slice(0, 2)) {
     recommendations.push({
       priority: "high",
@@ -229,7 +248,14 @@ function createRecommendations({
       description: `${gap.segmentValue} är underrepresenterat mot historisk försäljning. Nuvarande andel är ${percentage(gap.currentShare)}, jämfört med målprofilens ${percentage(gap.targetShare)}.`
     });
   }
-
+  for (const gap of underModels.slice(0, 2)) {
+    recommendations.push({
+      priority: "medium",
+      type: "buy_more_model_family",
+      title: `Komplettera med ${gap.segmentValue}`,
+      description: `${gap.segmentValue} är underrepresenterad jämfört med historisk försäljning för månaden. Lagerandel ${percentage(gap.currentShare)}, målprofil ${percentage(gap.targetShare)}.`
+    });
+  }
   for (const gap of underMileage.slice(0, 1)) {
     recommendations.push({
       priority: "medium",
@@ -256,7 +282,14 @@ function createRecommendations({
       description: `${gap.segmentValue} finns redan i högre andel än målprofilen indikerar för månaden.`
     });
   }
-
+  for (const gap of overModels.slice(0, 1)) {
+    recommendations.push({
+      priority: "low",
+      type: "avoid_model_family",
+      title: `Var försiktig med fler ${gap.segmentValue}`,
+      description: `${gap.segmentValue} är redan överrepresenterad i lagret jämfört med historisk målprofil.`
+    });
+  }
   for (const gap of overMileage.slice(0, 1)) {
     recommendations.push({
       priority: "low",
@@ -285,7 +318,23 @@ function createRecommendations({
         "Detta gör marginal- och prisanalysen mindre säker. Komplettera annonspris för bättre beslutsunderlag."
     });
   }
+  if (costRiskSummary?.negativeMarginShare > 0.12) {
+    recommendations.push({
+      priority: "high",
+      type: "margin_risk",
+      title: "Hög historisk marginalrisk i jämförelseunderlaget",
+      description: `${percentage(costRiskSummary.negativeMarginShare)} av jämförbar historisk försäljning hade negativ marginal. Prioritera inte bara volym, utan kontrollera inköpspris och påkostnad extra noggrant.`
+    });
+  }
 
+  if (costRiskSummary?.lowMarginShare > 0.2) {
+    recommendations.push({
+      priority: "medium",
+      type: "low_margin_risk",
+      title: "Flera historiska affärer har låg marginal",
+      description: `${percentage(costRiskSummary.lowMarginShare)} av historiken ligger i låg marginal eller hög kostnadsandel. Rekommendationerna bör därför vägas mot lönsamhet, inte bara försäljningstakt.`
+    });
+  }
   if (!recommendations.length) {
     recommendations.push({
       priority: "medium",
@@ -371,7 +420,10 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
   );
 
   const currentBrandShares = shareBy(inventoryVehicles, (v) => v.brand || "Okänt");
-
+  const currentModelFamilyShares = shareBy(
+    inventoryVehicles,
+    (v) => v.modelFamily || getModelFamily(v.brand, v.model) || "Okänt"
+  );
   const targetBrandKeys = Object.entries(targetProfile.brandShares)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
@@ -443,12 +495,34 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     currentBrandShares,
     targetProfile.brandShares
   );
+  const modelFamilyKeys = Object.entries(targetProfile.modelFamilyShares || {})
+    .filter(([value]) => value && value !== "Okänt")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([value]) => value);
 
+  const modelFamilyGaps = buildGaps(
+    currentModelFamilyShares,
+    targetProfile.modelFamilyShares || {},
+    "Modellfamilj",
+    modelFamilyKeys
+  );
+    const costRiskShares = targetProfile.costRiskShares || {};
+
+  const costRiskSummary = {
+    negativeMarginShare: costRiskShares["Negativ marginal"] || 0,
+    lowMarginShare:
+      (costRiskShares["Låg marginal"] || 0) +
+      (costRiskShares["Hög kostnadsandel"] || 0),
+    normalShare: costRiskShares["Normal"] || 0
+  };
   const recommendations = createRecommendations({
     targetMonth,
     priceGaps,
     mileageGaps,
     brandGaps,
+    modelFamilyGaps,
+    costRiskSummary,
     over180Days,
     missingAdPrice
   });
@@ -517,15 +591,19 @@ function analyzeInventory(soldVehicles, inventoryVehicles, targetMonth) {
     priceGaps,
     mileageGaps,
     brandGaps,
+    modelFamilyGaps,
+    costRiskSummary,
     underrepresented: {
       price: getTopUnderrepresented(priceGaps, 0.08),
       mileage: getTopUnderrepresented(mileageGaps, 0.08),
-      brands: getTopUnderrepresented(brandGaps, 0.06)
+      brands: getTopUnderrepresented(brandGaps, 0.06),
+      modelFamilies: getTopUnderrepresented(modelFamilyGaps, 0.04)
     },
     overrepresented: {
       price: getTopOverrepresented(priceGaps, 0.08),
       mileage: getTopOverrepresented(mileageGaps, 0.08),
-      brands: getTopOverrepresented(brandGaps, 0.06)
+      brands: getTopOverrepresented(brandGaps, 0.06),
+      modelFamilies: getTopOverrepresented(modelFamilyGaps, 0.04)
     },
     recommendations,
     riskVehicles,
