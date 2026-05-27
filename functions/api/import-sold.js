@@ -115,7 +115,46 @@ function getMileageBucket(mileage) {
   if (mileage < 15000) return "10-15k mil";
   return "15k+ mil";
 }
+function getModelFamily(brand, model) {
+  const cleanBrand = String(brand || "Okänt").trim();
+  const cleanModel = String(model || "Okänt").trim();
 
+  if (!cleanBrand || cleanBrand === "Okänt") return "Okänt";
+  if (!cleanModel || cleanModel === "Okänt") return cleanBrand;
+
+  const words = cleanModel.split(" ").filter(Boolean);
+  const first = words[0] || cleanModel;
+
+  return `${cleanBrand} ${first}`;
+}
+
+function getCostRiskBucket(productCost, salePrice, grossMargin) {
+  if (!salePrice || salePrice <= 0) return "Okänt";
+
+  const marginRate =
+    typeof grossMargin === "number" && Number.isFinite(grossMargin)
+      ? grossMargin / salePrice
+      : null;
+
+  const costRate =
+    typeof productCost === "number" && Number.isFinite(productCost)
+      ? productCost / salePrice
+      : null;
+
+  if (grossMargin !== null && grossMargin !== undefined && grossMargin < 0) {
+    return "Negativ marginal";
+  }
+
+  if (marginRate !== null && marginRate < 0.04) {
+    return "Låg marginal";
+  }
+
+  if (costRate !== null && costRate > 0.94) {
+    return "Hög kostnadsandel";
+  }
+
+  return "Normal";
+}
 function normalizeSoldRow(row) {
   const rawMakeModel = String(
     getValue(row, ["Märke & Modell", "Märke Modell", "Bil", "Fordonsmodell"]) || ""
@@ -137,7 +176,11 @@ function normalizeSoldRow(row) {
   );
 
   const mileage = parseNumber(getValue(row, ["Mil", "Miltal"]));
-
+  const modelFamily = getModelFamily(parsed.brand, parsed.model);
+  const productCost = parseNumber(getValue(row, ["Produktkostnad inkl", "Produktkostnad"]));
+  const grossMargin = parseNumber(
+    getValue(row, ["Vinstmarginal exkl", "Vinstmarginal", "Marginal"])
+  );
   return {
     id: crypto.randomUUID(),
     regNumber: String(
@@ -152,10 +195,10 @@ function normalizeSoldRow(row) {
     soldMonth: getMonthFromDate(soldDate),
     salePrice,
     purchasePrice: parseNumber(getValue(row, ["Inköpspris inkl", "Inköpspris"])),
-    productCost: parseNumber(getValue(row, ["Produktkostnad inkl", "Produktkostnad"])),
-    grossMargin: parseNumber(
-      getValue(row, ["Vinstmarginal exkl", "Vinstmarginal", "Marginal"])
-    ),
+       productCost,
+    grossMargin,
+    modelFamily,
+    costRiskBucket: getCostRiskBucket(productCost, salePrice, grossMargin),
     daysInStock: parseNumber(getValue(row, ["Dagar i lager", "Lagerdagar"])),
     prepDays: parseNumber(getValue(row, ["Dagar iordningställande"])),
     purchaseType: String(getValue(row, ["Inköpssätt"]) || ""),
@@ -211,8 +254,10 @@ export async function onRequestPost({ request, env }) {
         source,
         price_bucket,
         mileage_bucket,
+        model_family,
+        cost_risk_bucket,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const now = new Date().toISOString();
@@ -238,6 +283,8 @@ export async function onRequestPost({ request, env }) {
         vehicle.source,
         vehicle.priceBucket,
         vehicle.mileageBucket,
+        vehicle.modelFamily,
+        vehicle.costRiskBucket,
         now
       )
     );
